@@ -22,6 +22,8 @@ setup(
         'console_scripts': [
             'client_example = f100_gripper_pkg.client_example:main',
             'gripper_server = f100_gripper_pkg.gripper_server:main',
+            'get_hand_angle_server = f100_gripper_pkg.get_hand_angle_server:main',
+            'get_hand_angle_client = f100_gripper_pkg.get_hand_angle_client:main',
         ],
     },
 )

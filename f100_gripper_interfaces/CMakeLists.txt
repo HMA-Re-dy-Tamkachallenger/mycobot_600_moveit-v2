@@ -13,6 +13,7 @@ find_package(std_msgs REQUIRED)
 # カスタムサービスファイルのリストを作成
 set(srv_files
   "srv/SetHandAngle.srv"
+  "srv/GetHandAngle.srv"
 )
 
 # カスタムインターフェースの生成

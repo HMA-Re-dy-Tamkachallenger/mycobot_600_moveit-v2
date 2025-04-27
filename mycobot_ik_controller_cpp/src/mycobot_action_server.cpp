@@ -12,7 +12,7 @@
 #include <cstring>
 #include <arpa/inet.h>
 #include <unistd.h>
-#include <sys/socket.h>  
+#include <sys/socket.h>
 #include <control_msgs/action/follow_joint_trajectory.hpp>
 #include <trajectory_msgs/msg/joint_trajectory.hpp>
 #include <trajectory_msgs/msg/joint_trajectory_point.hpp>
@@ -55,7 +55,7 @@ private:
         (void)uuid;
         return rclcpp_action::GoalResponse::ACCEPT_AND_EXECUTE;
     }
-    
+
     rclcpp_action::CancelResponse handle_cancel(
         const std::shared_ptr<GoalHandleMoveEndEffector> goal_handle)
     {
@@ -63,7 +63,7 @@ private:
         (void)goal_handle;
         return rclcpp_action::CancelResponse::ACCEPT;
     }
-    
+
     void handle_accepted(const std::shared_ptr<GoalHandleMoveEndEffector> goal_handle)
     {
         std::thread{[this, goal_handle]() {
@@ -73,23 +73,40 @@ private:
 
     void execute(const std::shared_ptr<GoalHandleMoveEndEffector> goal_handle)
     {
-        RCLCPP_INFO(this->get_logger(), "Executing IK goal...");
-
         const auto goal = goal_handle->get_goal();
         auto result = std::make_shared<MoveEndEffector::Result>();
         auto feedback = std::make_shared<MoveEndEffector::Feedback>();
-      
-        // エンドエフェクタの目標姿勢をセット
+
         geometry_msgs::msg::Pose target_pose = goal->target_pose;
+        geometry_msgs::msg::Pose current_pose = move_group_interface_.getCurrentPose().pose;
+
+        // エンドエフェクタの現在座標と目標座標が同じなら即成功を返す
+        double dx = current_pose.position.x - target_pose.position.x;
+        double dy = current_pose.position.y - target_pose.position.y;
+        double dz = current_pose.position.z - target_pose.position.z;
+        double position_error = std::sqrt(dx*dx + dy*dy + dz*dz);
+
+        const double POSITION_TOLERANCE = 0.01; // 1cm
+        if(position_error < POSITION_TOLERANCE){
+            RCLCPP_INFO(this->get_logger(), "Current pose already matches target. No motion needed.");
+            result->success = true;
+            result->message = "Already at target pose.";
+            goal_handle->abort(result);
+            return;
+        }
+
+
+        // エンドエフェクタの目標姿勢をセット
         move_group_interface_.setPoseTarget(target_pose);
-      
+
+        RCLCPP_INFO(this->get_logger(), "Executing IK goal...");
         feedback->status_message = "Planning IK to target pose...";
         goal_handle->publish_feedback(feedback);
-      
+
         // パス計画を実行（内部で逆運動学を使う）
         moveit::planning_interface::MoveGroupInterface::Plan plan;
         bool success = (move_group_interface_.plan(plan) == moveit::core::MoveItErrorCode::SUCCESS);
-      
+
         if (!success) {
           RCLCPP_ERROR(this->get_logger(), "IK failed to find a solution.");
           result->success = false;
@@ -97,8 +114,8 @@ private:
           goal_handle->abort(result);
           return;
         }
-      
-        // 逆運動学で求められた目標姿勢のジョイント角度を取得
+
+        // 目標姿勢を取得
         std::vector<double> goal_joint_values;
         const auto & traj_points = plan.trajectory_.joint_trajectory.points;
         if (!traj_points.empty()) {
@@ -112,9 +129,15 @@ private:
             return;
         }
 
-        // 現在の関節角度 (MoveIt の状態から取得)
+        // 中間姿勢を取得
+        size_t n = traj_points.size();
+        size_t mid_idx = n / 2;
+        std::vector<double> mid_joint_values;
+        mid_joint_values = traj_points[mid_idx].positions;
+
+        // 現在姿勢を取得
         std::vector<double> current_joint_values = move_group_interface_.getCurrentJointValues();
-      
+
         // ログ出力
         for (size_t i = 0; i < goal_joint_values.size(); ++i) {
           RCLCPP_INFO(this->get_logger(), "goal Joint %ld: %.3f rad", i + 1, goal_joint_values[i]);
@@ -125,7 +148,7 @@ private:
             RCLCPP_INFO(this->get_logger(), "current Joint %ld: %.3f rad", i + 1, current_joint_values[i]);
             }
 
-        
+
         // サーバが立ち上がるまで待つ（サーバーが既に立ち上がっていたら待たないが、立ち上がっていなかったら最大3秒待つ）
         if (!trajectory_client_->wait_for_action_server(3s)) {
             RCLCPP_ERROR(this->get_logger(), "FollowJointTrajectory action server not available");
@@ -145,13 +168,19 @@ private:
         start_pt.positions = current_joint_values;
         start_pt.time_from_start = rclcpp::Duration::from_seconds(0.0);  // 0秒
 
-        // ポイント1: 目標姿勢
+        // ポイント1: 中間姿勢
+        // trajectory_msgs::msg::JointTrajectoryPoint mid_pt;
+        // mid_pt.positions = mid_joint_values;
+        // mid_pt.time_from_start = rclcpp::Duration::from_seconds(0.0025);
+
+        // ポイント2: 目標姿勢
         trajectory_msgs::msg::JointTrajectoryPoint goal_pt;
         goal_pt.positions = goal_joint_values;
         goal_pt.time_from_start = rclcpp::Duration::from_seconds(0.005);
 
         // 複数ポイントを登録
         trajectory.points.push_back(start_pt);
+        // trajectory.points.push_back(mid_pt);
         trajectory.points.push_back(goal_pt);
 
         // Goal メッセージ作成
@@ -169,7 +198,7 @@ private:
         {
             // 現在のジョイント状態を更新
             current_joint_values = move_group_interface_.getCurrentJointValues();
-    
+
             double max_error = 0.0;
             for (size_t i = 0; i < goal_joint_values.size(); ++i) {
                 double err = std::fabs(goal_joint_values[i] - current_joint_values[i]);
@@ -177,7 +206,7 @@ private:
                     max_error = err;
                 }
             }
-    
+
             // ログ出力やフィードバックで知らせる
             std::ostringstream oss;
             oss << "Max joint error: " << max_error;
@@ -186,7 +215,7 @@ private:
 
             // しきい値の定義（全ジョイント共通で例示）
             const double POSITION_TOLERANCE = 0.01;  // 0.01 rad 以下ならOKとする
-    
+
             // 条件を満たしていればループ終了
             if (max_error <= POSITION_TOLERANCE) {
                 reached = true;

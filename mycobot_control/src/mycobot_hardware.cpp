@@ -173,7 +173,8 @@ CallbackReturn RobotSystem::on_init(const hardware_interface::HardwareInfo &info
 
   //TODO
   // Set initial pose (in radians)
-  std::vector<double> init_pose = {0.0, -1.57, 0.0, -1.57, -1.57, 0.0}; 
+  std::vector<double> init_pose = {1.57, -2.618, 2.269, -1.222, -1.57, -0.8}; 
+  // std::vector<double> init_pose = {0.0, -1.57, 0.0, -1.57, -1.57, -0.8}; 
   // std::vector<double> init_pose = {-0.949, -0.442, -1.762, -4.080, 0.623, 2.230}; 
   joint_position_ = init_pose;
   joint_position_command_ = init_pose;
